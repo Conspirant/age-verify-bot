@@ -19,7 +19,7 @@ const TOKEN = process.env.BOT_TOKEN;
 const VERIFY_CHANNEL_NAME = "verify";
 const LOG_CHANNEL_NAME = "mod-logs";
 
-// 🔴 REPLACE THESE WITH YOUR REAL ROLE IDS
+// ✅ PROVIDED ROLE IDS
 const VERIFIED_ROLE_ID = "1402968064248778805";
 const AGE_13_17_ROLE_ID = "1466828437225341029";
 const AGE_18_20_ROLE_ID = "1466828536374366260";
@@ -30,63 +30,86 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
+/* ================= UTIL ================= */
+
+function sendModLog(channel, title, description, color = 0x2f3136) {
+  if (!channel) return;
+
+  const embed = new EmbedBuilder()
+    .setTitle(title)
+    .setDescription(description)
+    .setColor(color)
+    .setTimestamp();
+
+  channel.send({ embeds: [embed] });
+}
+
 /* ================= READY ================= */
 
 client.once("ready", async () => {
   console.log(`🤖 Logged in as ${client.user.tag}`);
 
-  const guild = client.guilds.cache.first();
-  if (!guild) return console.log("❌ No guild found");
+  for (const guild of client.guilds.cache.values()) {
+    try {
+      const verifyChannel = guild.channels.cache.find(
+        c => c.name === VERIFY_CHANNEL_NAME
+      );
+      if (!verifyChannel) continue;
 
-  const verifyChannel = guild.channels.cache.find(
-    c => c.name === VERIFY_CHANNEL_NAME
-  );
-  if (!verifyChannel) return console.log("❌ #verify channel not found");
+      const messages = await verifyChannel.messages.fetch({ limit: 10 });
+      const exists = messages.some(
+        m => m.author.id === client.user.id && m.components.length > 0
+      );
 
-  // 🔒 Prevent duplicate verification messages
-  const recentMessages = await verifyChannel.messages.fetch({ limit: 10 });
-  const alreadyExists = recentMessages.some(
-    m => m.author.id === client.user.id && m.components.length > 0
-  );
+      if (exists) continue;
 
-  if (alreadyExists) {
-    console.log("ℹ️ Verification message already exists");
-    return;
+      const embed = new EmbedBuilder()
+        .setTitle("🛂 Server Age Verification")
+        .setDescription(
+          "**Welcome to the community.**\n\n" +
+          "Before continuing, please verify your age.\n\n" +
+          "• Allowed age range: **13–20**\n" +
+          "• Takes less than **10 seconds**\n" +
+          "• Your birthdate is **never stored**\n\n" +
+          "_False information may result in removal._"
+        )
+        .setColor(0x5865f2)
+        .setThumbnail(guild.iconURL({ dynamic: true }))
+        .setFooter({
+          text: "Secure Verification • Privacy First"
+        });
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("verify_age")
+          .setLabel("Verify My Age")
+          .setStyle(ButtonStyle.Primary)
+      );
+
+      await verifyChannel.send({ embeds: [embed], components: [row] });
+      console.log(`✅ Verification message posted in ${guild.name}`);
+    } catch (err) {
+      console.error(`❌ Error in ${guild.name}`, err);
+    }
   }
-
-  const embed = new EmbedBuilder()
-    .setTitle("🔐 Age Verification Required")
-    .setDescription(
-      "**This server is restricted to users aged 13–20.**\n\n" +
-      "Click the button below to verify your age.\n" +
-      "Your birthdate is **not stored**.\n\n" +
-      "_False information may result in removal._"
-    )
-    .setColor(0x5865f2)
-    .setFooter({ text: "Verification System • Secure & Private" });
-
-  const buttonRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("verify_age")
-      .setLabel("Verify Age")
-      .setEmoji("🪪")
-      .setStyle(ButtonStyle.Primary)
-  );
-
-  await verifyChannel.send({
-    embeds: [embed],
-    components: [buttonRow]
-  });
-
-  console.log("✅ Verification message sent");
 });
 
 /* ============ INTERACTIONS ============ */
 
 client.on(Events.InteractionCreate, async interaction => {
 
-  /* ---------- BUTTON CLICK ---------- */
+  /* ---------- BUTTON ---------- */
   if (interaction.isButton() && interaction.customId === "verify_age") {
+    const member = interaction.member;
+
+    // 🛑 Already verified guard
+    if (member.roles.cache.has(VERIFIED_ROLE_ID)) {
+      return interaction.reply({
+        content: "✅ You are already verified.",
+        ephemeral: true
+      });
+    }
+
     const modal = new ModalBuilder()
       .setCustomId("age_modal")
       .setTitle("Age Verification");
@@ -118,8 +141,22 @@ client.on(Events.InteractionCreate, async interaction => {
     return interaction.showModal(modal);
   }
 
-  /* ---------- MODAL SUBMIT ---------- */
+  /* ---------- MODAL ---------- */
   if (interaction.isModalSubmit() && interaction.customId === "age_modal") {
+    const member = interaction.member;
+    const guild = interaction.guild;
+    const logChannel = guild.channels.cache.find(
+      c => c.name === LOG_CHANNEL_NAME
+    );
+
+    // 🛑 Double guard
+    if (member.roles.cache.has(VERIFIED_ROLE_ID)) {
+      return interaction.reply({
+        content: "✅ You are already verified.",
+        ephemeral: true
+      });
+    }
+
     const d = parseInt(interaction.fields.getTextInputValue("day"));
     const m = parseInt(interaction.fields.getTextInputValue("month")) - 1;
     const y = parseInt(interaction.fields.getTextInputValue("year"));
@@ -143,76 +180,77 @@ client.on(Events.InteractionCreate, async interaction => {
       age--;
     }
 
-    const member = interaction.member;
-    const logChannel = interaction.guild.channels.cache.find(
-      c => c.name === LOG_CHANNEL_NAME
-    );
-
-    /* ---------- AGE CHECK ---------- */
+    /* ---------- AGE FAIL ---------- */
     if (age < 13 || age > 20) {
       await interaction.reply({
-        content: "❌ This server is restricted to ages **13–20**.",
+        content: "❌ This server is restricted to users aged **13–20**.",
         ephemeral: true
       });
 
-      logChannel?.send(
-        `🚫 **Verification Failed**\nUser: ${member.user.tag}\nReason: Age out of range`
+      sendModLog(
+        logChannel,
+        "🚫 Verification Failed",
+        `**User:** ${member.user.tag}\n**Reason:** Age out of range`,
+        0xed4245
       );
 
-      // 🚨 DO NOT TRY TO KICK ADMINS
-      if (member.permissions.has(PermissionFlagsBits.Administrator)) {
-        logChannel?.send(
-          `⚠️ ${member.user.tag} is an admin — not kicked`
-        );
-        return;
+      if (!member.permissions.has(PermissionFlagsBits.Administrator)) {
+        setTimeout(async () => {
+          try {
+            await member.kick("Age not allowed");
+          } catch {
+            sendModLog(
+              logChannel,
+              "⚠️ Kick Failed",
+              `**User:** ${member.user.tag}\n**Reason:** Role hierarchy or permissions`,
+              0xfaa61a
+            );
+          }
+        }, 3000);
       }
-
-      // 🛡️ Safe kick (won’t crash bot)
-      setTimeout(async () => {
-        try {
-          await member.kick("Age not allowed");
-        } catch (err) {
-          logChannel?.send(
-            `⚠️ Failed to kick ${member.user.tag} (role hierarchy or permissions)`
-          );
-        }
-      }, 3000);
 
       return;
     }
 
-    /* ---------- ROLE ASSIGNMENT ---------- */
-    const verifiedRole = interaction.guild.roles.cache.get(
-      VERIFIED_ROLE_ID
-    );
-
-    const ageRole = interaction.guild.roles.cache.get(
+    /* ---------- SUCCESS ---------- */
+    const verifiedRole = guild.roles.cache.get(VERIFIED_ROLE_ID);
+    const ageRole = guild.roles.cache.get(
       age >= 18 ? AGE_18_20_ROLE_ID : AGE_13_17_ROLE_ID
     );
-
-    if (!verifiedRole || !ageRole) {
-      return interaction.reply({
-        content: "❌ Verification failed. Please contact a moderator.",
-        ephemeral: true
-      });
-    }
 
     await member.roles.add([verifiedRole, ageRole]);
 
     await interaction.reply({
-      content: "✅ You are verified. Welcome!",
+      content: "✅ **Verification successful. Welcome!**",
       ephemeral: true
     });
 
-    logChannel?.send(
-      `✅ **User Verified**\nUser: ${member.user.tag}\nAge Group: ${
+    sendModLog(
+      logChannel,
+      "✅ User Verified",
+      `**User:** ${member.user.tag}\n**Age Group:** ${
         age >= 18 ? "18–20" : "13–17"
-      }`
+      }`,
+      0x57f287
     );
+
+    // 🔒 Disable button after success
+    try {
+      const message = await interaction.channel.messages.fetch(
+        interaction.message.id
+      );
+
+      const disabledRow = new ActionRowBuilder().addComponents(
+        ButtonBuilder.from(message.components[0].components[0]).setDisabled(true)
+      );
+
+      await message.edit({ components: [disabledRow] });
+    } catch {
+      /* Silent fail – not critical */
+    }
   }
 });
 
 /* ============ LOGIN ============ */
 
 client.login(TOKEN);
-
