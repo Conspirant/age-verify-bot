@@ -8,7 +8,8 @@ const {
   TextInputBuilder,
   TextInputStyle,
   EmbedBuilder,
-  Events
+  Events,
+  PermissionFlagsBits
 } = require("discord.js");
 
 /* ================= CONFIG ================= */
@@ -18,11 +19,10 @@ const TOKEN = process.env.BOT_TOKEN;
 const VERIFY_CHANNEL_NAME = "verify";
 const LOG_CHANNEL_NAME = "mod-logs";
 
-const ROLE_IDS = {
-  VERIFIED: "1413856800033472535",
-  AGE_13_17: "1413856800033472532",
-  AGE_18_20: "1413856799638945880"
-};
+// 🔴 REPLACE THESE WITH YOUR REAL ROLE IDS
+const VERIFIED_ROLE_ID = "1413856800033472535";
+const AGE_13_17_ROLE_ID = "1413856800033472532";
+const AGE_18_20_ROLE_ID = "1413856799638945880";
 
 /* ========================================== */
 
@@ -43,6 +43,17 @@ client.once("ready", async () => {
   );
   if (!verifyChannel) return console.log("❌ #verify channel not found");
 
+  // 🔒 Prevent duplicate verification messages
+  const recentMessages = await verifyChannel.messages.fetch({ limit: 10 });
+  const alreadyExists = recentMessages.some(
+    m => m.author.id === client.user.id && m.components.length > 0
+  );
+
+  if (alreadyExists) {
+    console.log("ℹ️ Verification message already exists");
+    return;
+  }
+
   const embed = new EmbedBuilder()
     .setTitle("🔐 Age Verification Required")
     .setDescription(
@@ -51,7 +62,7 @@ client.once("ready", async () => {
       "Your birthdate is **not stored**.\n\n" +
       "_False information may result in removal._"
     )
-    .setColor(0x5865F2)
+    .setColor(0x5865f2)
     .setFooter({ text: "Verification System • Secure & Private" });
 
   const buttonRow = new ActionRowBuilder().addComponents(
@@ -62,7 +73,10 @@ client.once("ready", async () => {
       .setStyle(ButtonStyle.Primary)
   );
 
-  await verifyChannel.send({ embeds: [embed], components: [buttonRow] });
+  await verifyChannel.send({
+    embeds: [embed],
+    components: [buttonRow]
+  });
 
   console.log("✅ Verification message sent");
 });
@@ -71,56 +85,53 @@ client.once("ready", async () => {
 
 client.on(Events.InteractionCreate, async interaction => {
 
-  /* ---- Button Click ---- */
+  /* ---------- BUTTON CLICK ---------- */
   if (interaction.isButton() && interaction.customId === "verify_age") {
     const modal = new ModalBuilder()
       .setCustomId("age_modal")
       .setTitle("Age Verification");
 
-    const fields = [
-      new TextInputBuilder()
-        .setCustomId("day")
-        .setLabel("Day (DD)")
-        .setPlaceholder("e.g. 07")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true),
+    const day = new TextInputBuilder()
+      .setCustomId("day")
+      .setLabel("Day (DD)")
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
 
-      new TextInputBuilder()
-        .setCustomId("month")
-        .setLabel("Month (MM)")
-        .setPlaceholder("e.g. 11")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true),
+    const month = new TextInputBuilder()
+      .setCustomId("month")
+      .setLabel("Month (MM)")
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
 
-      new TextInputBuilder()
-        .setCustomId("year")
-        .setLabel("Year (YYYY)")
-        .setPlaceholder("e.g. 2008")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-    ];
+    const year = new TextInputBuilder()
+      .setCustomId("year")
+      .setLabel("Year (YYYY)")
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
 
     modal.addComponents(
-      ...fields.map(f => new ActionRowBuilder().addComponents(f))
+      new ActionRowBuilder().addComponents(day),
+      new ActionRowBuilder().addComponents(month),
+      new ActionRowBuilder().addComponents(year)
     );
 
     return interaction.showModal(modal);
   }
 
-  /* ---- Modal Submit ---- */
+  /* ---------- MODAL SUBMIT ---------- */
   if (interaction.isModalSubmit() && interaction.customId === "age_modal") {
-    const day = parseInt(interaction.fields.getTextInputValue("day"));
-    const month = parseInt(interaction.fields.getTextInputValue("month")) - 1;
-    const year = parseInt(interaction.fields.getTextInputValue("year"));
+    const d = parseInt(interaction.fields.getTextInputValue("day"));
+    const m = parseInt(interaction.fields.getTextInputValue("month")) - 1;
+    const y = parseInt(interaction.fields.getTextInputValue("year"));
 
-    if ([day, month, year].some(isNaN)) {
+    if ([d, m, y].some(isNaN)) {
       return interaction.reply({
         content: "❌ Invalid date format.",
         ephemeral: true
       });
     }
 
-    const dob = new Date(year, month, day);
+    const dob = new Date(y, m, d);
     const today = new Date();
 
     let age = today.getFullYear() - dob.getFullYear();
@@ -137,7 +148,7 @@ client.on(Events.InteractionCreate, async interaction => {
       c => c.name === LOG_CHANNEL_NAME
     );
 
-    /* ---- Age Check ---- */
+    /* ---------- AGE CHECK ---------- */
     if (age < 13 || age > 20) {
       await interaction.reply({
         content: "❌ This server is restricted to ages **13–20**.",
@@ -148,17 +159,35 @@ client.on(Events.InteractionCreate, async interaction => {
         `🚫 **Verification Failed**\nUser: ${member.user.tag}\nReason: Age out of range`
       );
 
-      setTimeout(() => member.kick("Age not allowed"), 3000);
+      // 🚨 DO NOT TRY TO KICK ADMINS
+      if (member.permissions.has(PermissionFlagsBits.Administrator)) {
+        logChannel?.send(
+          `⚠️ ${member.user.tag} is an admin — not kicked`
+        );
+        return;
+      }
+
+      // 🛡️ Safe kick (won’t crash bot)
+      setTimeout(async () => {
+        try {
+          await member.kick("Age not allowed");
+        } catch (err) {
+          logChannel?.send(
+            `⚠️ Failed to kick ${member.user.tag} (role hierarchy or permissions)`
+          );
+        }
+      }, 3000);
+
       return;
     }
 
-    /* ---- Role Assignment ---- */
+    /* ---------- ROLE ASSIGNMENT ---------- */
     const verifiedRole = interaction.guild.roles.cache.get(
-      ROLE_IDS.VERIFIED
+      VERIFIED_ROLE_ID
     );
 
     const ageRole = interaction.guild.roles.cache.get(
-      age >= 18 ? ROLE_IDS.AGE_18_20 : ROLE_IDS.AGE_13_17
+      age >= 18 ? AGE_18_20_ROLE_ID : AGE_13_17_ROLE_ID
     );
 
     if (!verifiedRole || !ageRole) {
