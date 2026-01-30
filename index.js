@@ -20,9 +20,9 @@ const VERIFY_CHANNEL_NAME = "verify";
 const LOG_CHANNEL_NAME = "mod-logs";
 
 // 🔴 REPLACE THESE WITH YOUR REAL ROLE IDS
-const VERIFIED_ROLE_ID = "1413856800033472535";
-const AGE_13_17_ROLE_ID = "1413856800033472532";
-const AGE_18_20_ROLE_ID = "1413856799638945880";
+const VERIFIED_ROLE_ID = "1402968064248778805";
+const AGE_13_17_ROLE_ID = "1466828437225341029";
+const AGE_18_20_ROLE_ID = "1466828536374366260";
 
 /* ========================================== */
 
@@ -215,3 +215,4 @@ client.on(Events.InteractionCreate, async interaction => {
 /* ============ LOGIN ============ */
 
 client.login(TOKEN);
+
